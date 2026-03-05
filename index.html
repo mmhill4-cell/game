@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GESTURE RUNNER</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+  :root {
+    --neon-cyan: #00fff7;
+    --neon-pink: #ff006e;
+    --neon-yellow: #ffee00;
+    --neon-green: #39ff14;
+    --dark: #030a0e;
+    --panel: rgba(0,255,247,0.05);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--dark);
+    font-family: 'Orbitron', monospace;
+    color: var(--neon-cyan);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* Scanlines overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.15) 2px,
+      rgba(0,0,0,0.15) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  #loading-screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: var(--dark);
+    z-index: 100;
+    gap: 20px;
+  }
+
+  #loading-screen h1 {
+    font-size: 3rem;
+    font-weight: 900;
+    letter-spacing: 0.2em;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 20px var(--neon-cyan), 0 0 40px var(--neon-cyan);
+    animation: flicker 2s infinite;
+  }
+
+  @keyframes flicker {
+    0%,100% { opacity:1 } 92% { opacity:1 } 93% { opacity:0.4 } 95% { opacity:1 } 97% { opacity:0.6 } 98% { opacity:1 }
+  }
+
+  .loader-bar {
+    width: 300px; height: 4px;
+    background: rgba(0,255,247,0.15);
+    border: 1px solid var(--neon-cyan);
+  }
+  .loader-fill {
+    height: 100%; width: 0%;
+    background: var(--neon-cyan);
+    box-shadow: 0 0 10px var(--neon-cyan);
+    transition: width 0.3s;
+  }
+
+  .loader-text {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.75rem;
+    color: rgba(0,255,247,0.6);
+    letter-spacing: 0.1em;
+  }
+
+  /* MAIN LAYOUT */
+  #game-wrapper {
+    display: none;
+    width: 100vw; height: 100vh;
+    position: relative;
+  }
+
+  /* CAMERA PANEL */
+  #cam-panel {
+    position: absolute;
+    bottom: 16px; left: 16px;
+    width: 180px;
+    z-index: 50;
+  }
+
+  #cam-panel h3 {
+    font-size: 0.55rem;
+    letter-spacing: 0.15em;
+    color: rgba(0,255,247,0.5);
+    margin-bottom: 6px;
+  }
+
+  #webcam-container {
+    width: 180px; height: 135px;
+    border: 1px solid rgba(0,255,247,0.3);
+    position: relative;
+    overflow: hidden;
+    background: #000;
+  }
+
+  #webcam-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+    transform: scaleX(-1);
+  }
+
+  /* Corner decorations */
+  #webcam-container::before, #webcam-container::after {
+    content: '';
+    position: absolute;
+    width: 12px; height: 12px;
+    z-index: 2;
+  }
+  #webcam-container::before {
+    top: 0; left: 0;
+    border-top: 2px solid var(--neon-cyan);
+    border-left: 2px solid var(--neon-cyan);
+  }
+  #webcam-container::after {
+    bottom: 0; right: 0;
+    border-bottom: 2px solid var(--neon-cyan);
+    border-right: 2px solid var(--neon-cyan);
+  }
+
+  #predictions {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .pred-row {
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  .pred-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(0,255,247,0.7);
+    width: 70px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pred-bar-bg {
+    flex: 1; height: 6px;
+    background: rgba(0,255,247,0.1);
+  }
+
+  .pred-bar {
+    height: 100%;
+    background: var(--neon-cyan);
+    box-shadow: 0 0 6px var(--neon-cyan);
+    transition: width 0.1s;
+  }
+
+  .pred-row.active .pred-label { color: var(--neon-yellow); }
+  .pred-row.active .pred-bar { background: var(--neon-yellow); box-shadow: 0 0 8px var(--neon-yellow); }
+
+  /* ACTIVE GESTURE DISPLAY */
+  #gesture-display {
+    position: absolute;
+    top: 16px; left: 16px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.15em;
+    color: rgba(0,255,247,0.5);
+    z-index: 50;
+  }
+  #gesture-display span {
+    color: var(--neon-yellow);
+    font-weight: bold;
+    text-shadow: 0 0 10px var(--neon-yellow);
+  }
+
+  /* SCORE / HUD */
+  #hud {
+    position: absolute;
+    top: 16px; right: 16px;
+    text-align: right;
+    z-index: 50;
+  }
+
+  #score-label {
+    font-size: 0.55rem;
+    letter-spacing: 0.2em;
+    color: rgba(0,255,247,0.4);
+  }
+
+  #score-value {
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: var(--neon-cyan);
+    text-shadow: 0 0 20px var(--neon-cyan);
+    line-height: 1;
+  }
+
+  #hi-score {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(0,255,247,0.35);
+    margin-top: 4px;
+  }
+
+  /* LIVES */
+  #lives {
+    position: absolute;
+    top: 100px; right: 16px;
+    display: flex; gap: 6px;
+    z-index: 50;
+  }
+
+  .heart {
+    font-size: 1.2rem;
+    filter: drop-shadow(0 0 6px var(--neon-pink));
+    transition: opacity 0.3s;
+  }
+  .heart.dead { opacity: 0.15; filter: none; }
+
+  /* GAME CANVAS */
+  #game-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* OVERLAY SCREENS */
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: rgba(3,10,14,0.92);
+    z-index: 60;
+    gap: 20px;
+  }
+
+  .overlay h1 {
+    font-size: clamp(2rem, 5vw, 4rem);
+    font-weight: 900;
+    letter-spacing: 0.15em;
+    text-shadow: 0 0 30px currentColor;
+    animation: flicker 3s infinite;
+  }
+
+  .overlay p {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.85rem;
+    color: rgba(0,255,247,0.6);
+    letter-spacing: 0.1em;
+    text-align: center;
+    max-width: 500px;
+    line-height: 1.8;
+  }
+
+  .controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    max-width: 600px;
+    width: 90%;
+  }
+
+  .control-card {
+    background: rgba(0,255,247,0.05);
+    border: 1px solid rgba(0,255,247,0.2);
+    padding: 12px;
+    text-align: center;
+  }
+
+  .control-card .gesture-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--neon-yellow);
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+  }
+
+  .control-card .action-name {
+    font-size: 0.7rem;
+    color: rgba(0,255,247,0.7);
+    letter-spacing: 0.05em;
+  }
+
+  .btn {
+    background: transparent;
+    border: 1px solid var(--neon-cyan);
+    color: var(--neon-cyan);
+    font-family: 'Orbitron', monospace;
+    font-size: 0.8rem;
+    letter-spacing: 0.2em;
+    padding: 12px 32px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    box-shadow: 0 0 10px rgba(0,255,247,0.2), inset 0 0 10px rgba(0,255,247,0.05);
+  }
+
+  .btn:hover {
+    background: rgba(0,255,247,0.1);
+    box-shadow: 0 0 20px rgba(0,255,247,0.5), inset 0 0 20px rgba(0,255,247,0.1);
+  }
+
+  .game-over-score {
+    font-size: 1.2rem;
+    color: var(--neon-pink);
+    text-shadow: 0 0 20px var(--neon-pink);
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 0.15em;
+  }
+
+  /* SPEED INDICATOR */
+  #speed-bar {
+    position: absolute;
+    bottom: 16px; right: 16px;
+    width: 120px;
+    z-index: 50;
+  }
+
+  #speed-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.55rem;
+    color: rgba(0,255,247,0.4);
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+    text-align: right;
+  }
+
+  #speed-fill-bg {
+    height: 4px;
+    background: rgba(0,255,247,0.1);
+    border: 1px solid rgba(0,255,247,0.2);
+  }
+
+  #speed-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink));
+    box-shadow: 0 0 8px var(--neon-cyan);
+    transition: width 0.5s;
+  }
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading-screen">
+  <h1>GESTURE RUNNER</h1>
+  <div class="loader-bar"><div class="loader-fill" id="loader-fill"></div></div>
+  <div class="loader-text" id="loader-text">INITIALIZING AI MODEL...</div>
+</div>
+
+<!-- GAME WRAPPER -->
+<div id="game-wrapper">
+  <canvas id="game-canvas"></canvas>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="score-label">SCORE</div>
+    <div id="score-value">0</div>
+    <div id="hi-score">HI: <span id="hi-val">0</span></div>
+  </div>
+
+  <div id="lives">
+    <div class="heart" id="h1">♥</div>
+    <div class="heart" id="h2">♥</div>
+    <div class="heart" id="h3">♥</div>
+  </div>
+
+  <div id="gesture-display">GESTURE: <span id="gesture-text">—</span></div>
+
+  <div id="speed-bar">
+    <div id="speed-label">SPEED</div>
+    <div id="speed-fill-bg"><div id="speed-fill" style="width:10%"></div></div>
+  </div>
+
+  <!-- CAMERA -->
+  <div id="cam-panel">
+    <h3>// CAMERA INPUT</h3>
+    <div id="webcam-container"></div>
+    <div id="predictions"></div>
+  </div>
+
+  <!-- START SCREEN -->
+  <div class="overlay" id="start-screen">
+    <h1 style="color: var(--neon-cyan)">GESTURE RUNNER</h1>
+    <p>Control the runner with your body movements detected by AI.<br>Avoid obstacles to survive!</p>
+    <div class="controls-grid" id="controls-grid">
+      <div style="text-align:center; color: rgba(0,255,247,0.4); font-family:'Share Tech Mono',monospace; font-size:0.7rem; grid-column:1/-1">
+        Loading gesture controls...
+      </div>
+    </div>
+    <button class="btn" id="start-btn">START GAME</button>
+  </div>
+
+  <!-- GAME OVER -->
+  <div class="overlay" id="gameover-screen" style="display:none">
+    <h1 style="color: var(--neon-pink)">GAME OVER</h1>
+    <div class="game-over-score">SCORE: <span id="final-score">0</span></div>
+    <div style="font-family:'Share Tech Mono',monospace; font-size:0.7rem; color: rgba(0,255,247,0.4)">
+      HI-SCORE: <span id="final-hi" style="color:var(--neon-yellow)">0</span>
+    </div>
+    <button class="btn" id="restart-btn">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script>
+const MODEL_URL = 'https://teachablemachine.withgoogle.com/models/VcDWu15GL/';
+let model, webcam, maxPredictions;
+let classes = [];
+let currentGesture = '';
+let gestureConfidence = 0;
+
+// ---- GAME STATE ----
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+let gameRunning = false;
+let score = 0;
+let hiScore = 0;
+let lives = 3;
+let frameCount = 0;
+let speed = 3;
+let particles = [];
+let obstacles = [];
+let bgLayers = [];
+let player;
+let animId;
+let spawnTimer = 0;
+let spawnInterval = 90;
+
+// Resize canvas
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', () => { resize(); initBgLayers(); });
+
+// ---- COLORS ----
+const COLORS = {
+  ground: '#0a1a20',
+  groundLine: 'rgba(0,255,247,0.15)',
+  player: '#00fff7',
+  playerGlow: '#00fff7',
+  obstacle: '#ff006e',
+  obstacleGlow: '#ff006e',
+  score: '#00fff7',
+};
+
+// ---- BACKGROUND LAYERS ----
+function initBgLayers() {
+  bgLayers = [];
+  // Layer 1: far stars
+  let stars = [];
+  for (let i = 0; i < 80; i++) {
+    stars.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height * 0.7, r: Math.random() * 1.5, speed: 0.2 });
+  }
+  bgLayers.push({ items: stars, type: 'stars' });
+
+  // Layer 2: grid lines
+  bgLayers.push({ type: 'grid' });
+
+  // Layer 3: mid buildings
+  let buildings = [];
+  for (let i = 0; i < 12; i++) {
+    buildings.push({
+      x: i * (canvas.width / 10) + Math.random() * 60,
+      w: 20 + Math.random() * 40,
+      h: 40 + Math.random() * 120,
+      speed: 0.5
+    });
+  }
+  bgLayers.push({ items: buildings, type: 'buildings' });
+}
+initBgLayers();
+
+// ---- PLAYER ----
+function createPlayer() {
+  const groundY = canvas.height * 0.72;
+  return {
+    x: canvas.width * 0.18,
+    y: groundY,
+    w: 28, h: 44,
+    vy: 0,
+    grounded: true,
+    ducking: false,
+    groundY,
+    jumpCount: 0,
+    maxJumps: 2,
+    trail: [],
+    invincible: 0,
+    flashTimer: 0,
+  };
+}
+
+// ---- GESTURE → ACTION MAPPING ----
+// Will be set once we know the class names
+let gestureActions = {}; // className -> 'jump' | 'duck' | 'idle' | 'double_jump'
+
+function mapGestureActions(classNames) {
+  // Smart mapping based on common gesture names
+  gestureActions = {};
+  const actionPool = ['jump', 'duck', 'double_jump', 'idle'];
+  let assigned = 0;
+
+  const jumpKeywords = ['jump','up','raise','high','arms up','hands up','leap','rise','left'];
+  const duckKeywords = ['duck','down','crouch','low','squat','bend','right','dodge'];
+  const idleKeywords = ['idle','neutral','nothing','rest','normal','stand','center','middle'];
+
+  classNames.forEach(name => {
+    const lower = name.toLowerCase();
+    if (jumpKeywords.some(k => lower.includes(k))) {
+      gestureActions[name] = assigned === 0 ? 'jump' : 'double_jump';
+      assigned++;
+    } else if (duckKeywords.some(k => lower.includes(k))) {
+      gestureActions[name] = 'duck';
+    } else if (idleKeywords.some(k => lower.includes(k))) {
+      gestureActions[name] = 'idle';
+    }
+  });
+
+  // Fallback: if we have unassigned classes, distribute
+  let jumpAssigned = Object.values(gestureActions).includes('jump');
+  let duckAssigned = Object.values(gestureActions).includes('duck');
+  let idleAssigned = Object.values(gestureActions).includes('idle');
+
+  classNames.forEach(name => {
+    if (gestureActions[name]) return;
+    if (!jumpAssigned) { gestureActions[name] = 'jump'; jumpAssigned = true; }
+    else if (!duckAssigned) { gestureActions[name] = 'duck'; duckAssigned = true; }
+    else if (!idleAssigned) { gestureActions[name] = 'idle'; idleAssigned = true; }
+    else { gestureActions[name] = 'double_jump'; }
+  });
+
+  return gestureActions;
+}
+
+// Build controls display
+function buildControlsUI() {
+  const grid = document.getElementById('controls-grid');
+  const actionEmoji = { jump: '⬆️ JUMP', duck: '⬇️ DUCK', double_jump: '⚡ DOUBLE JUMP', idle: '▶️ RUN' };
+  grid.innerHTML = '';
+  classes.forEach(name => {
+    const action = gestureActions[name] || 'idle';
+    const card = document.createElement('div');
+    card.className = 'control-card';
+    card.innerHTML = `<div class="gesture-name">${name.toUpperCase()}</div><div class="action-name">${actionEmoji[action] || action}</div>`;
+    grid.appendChild(card);
+  });
+}
+
+// ---- OBSTACLE TYPES ----
+function spawnObstacle() {
+  const groundY = canvas.height * 0.72;
+  const types = ['low', 'low', 'high', 'tall', 'low_wide'];
+  const type = types[Math.floor(Math.random() * types.length)];
+
+  let obs = { x: canvas.width + 60, speed, hit: false, type };
+
+  if (type === 'low') {
+    obs.w = 22 + Math.random() * 18; obs.h = 30 + Math.random() * 20;
+    obs.y = groundY - obs.h;
+    obs.needsDuck = false;
+  } else if (type === 'low_wide') {
+    obs.w = 50 + Math.random() * 30; obs.h = 20 + Math.random() * 15;
+    obs.y = groundY - obs.h;
+    obs.needsDuck = false;
+  } else if (type === 'high') {
+    // Floating obstacle - needs duck to pass under
+    obs.w = 28; obs.h = 18;
+    obs.y = groundY - 75;
+    obs.needsDuck = true;
+  } else if (type === 'tall') {
+    obs.w = 18; obs.h = 55 + Math.random() * 30;
+    obs.y = groundY - obs.h;
+    obs.needsDuck = false;
+  }
+  obstacles.push(obs);
+}
+
+// ---- PARTICLES ----
+function spawnParticles(x, y, color, count = 8) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 6,
+      vy: (Math.random() - 0.5) * 6 - 2,
+      life: 1, decay: 0.03 + Math.random() * 0.05,
+      r: 2 + Math.random() * 4, color
+    });
+  }
+}
+
+// ---- DRAW ----
+function drawBg() {
+  ctx.fillStyle = '#030a0e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Stars
+  const stars = bgLayers.find(l => l.type === 'stars');
+  if (stars) {
+    stars.items.forEach(s => {
+      const alpha = 0.3 + Math.random() * 0.3;
+      ctx.fillStyle = `rgba(0,255,247,${alpha})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  // Buildings
+  const bldgs = bgLayers.find(l => l.type === 'buildings');
+  if (bldgs) {
+    bldgs.items.forEach(b => {
+      const groundY = canvas.height * 0.72;
+      ctx.strokeStyle = 'rgba(0,255,247,0.08)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(b.x, groundY - b.h, b.w, b.h);
+      // window dots
+      for (let wy = groundY - b.h + 8; wy < groundY - 6; wy += 12) {
+        for (let wx = b.x + 4; wx < b.x + b.w - 4; wx += 10) {
+          if (Math.random() > 0.5) {
+            ctx.fillStyle = 'rgba(0,255,247,0.12)';
+            ctx.fillRect(wx, wy, 4, 5);
+          }
+        }
+      }
+    });
+  }
+
+  // Ground
+  const groundY = canvas.height * 0.72;
+  ctx.fillStyle = 'rgba(0,255,247,0.03)';
+  ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+
+  // Ground line
+  ctx.strokeStyle = 'rgba(0,255,247,0.4)';
+  ctx.lineWidth = 1;
+  ctx.shadowColor = 'rgba(0,255,247,0.5)';
+  ctx.shadowBlur = 4;
+  ctx.beginPath();
+  ctx.moveTo(0, groundY);
+  ctx.lineTo(canvas.width, groundY);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Grid lines on ground
+  ctx.strokeStyle = 'rgba(0,255,247,0.06)';
+  ctx.lineWidth = 1;
+  const gridOffset = (frameCount * speed * 0.5) % 60;
+  for (let gx = -gridOffset; gx < canvas.width; gx += 60) {
+    ctx.beginPath();
+    ctx.moveTo(gx, groundY);
+    ctx.lineTo(gx + 80, canvas.height);
+    ctx.stroke();
+  }
+}
+
+function drawPlayer(p) {
+  if (p.invincible > 0 && Math.floor(p.invincible / 4) % 2 === 0) return;
+
+  ctx.save();
+  const h = p.ducking ? p.h * 0.5 : p.h;
+  const y = p.ducking ? p.y + p.h * 0.5 : p.y;
+
+  // Trail
+  p.trail.forEach((t, i) => {
+    const alpha = (i / p.trail.length) * 0.3;
+    ctx.fillStyle = `rgba(0,255,247,${alpha})`;
+    const th = p.ducking ? t.h * 0.5 : t.h;
+    const ty = p.ducking ? t.y + t.h * 0.5 : t.y;
+    ctx.fillRect(t.x - p.w/2, ty - th, p.w * (0.5 + i/p.trail.length * 0.5), th);
+  });
+
+  // Glow
+  ctx.shadowColor = COLORS.playerGlow;
+  ctx.shadowBlur = 20;
+
+  // Body
+  ctx.fillStyle = COLORS.player;
+  ctx.fillRect(p.x - p.w/2, y - h, p.w, h);
+
+  // Inner detail
+  ctx.fillStyle = 'rgba(3,10,14,0.5)';
+  ctx.fillRect(p.x - p.w/2 + 4, y - h + 6, p.w - 8, h - 12);
+
+  // Eye
+  ctx.fillStyle = COLORS.player;
+  ctx.shadowBlur = 10;
+  ctx.fillRect(p.x + 4, y - h + 8, 6, 5);
+
+  ctx.restore();
+}
+
+function drawObstacle(obs) {
+  ctx.save();
+  ctx.shadowColor = COLORS.obstacleGlow;
+  ctx.shadowBlur = 15;
+
+  // Main body
+  ctx.fillStyle = COLORS.obstacle;
+  ctx.fillRect(obs.x, obs.y, obs.w, obs.h);
+
+  // Inner
+  ctx.fillStyle = 'rgba(3,10,14,0.4)';
+  ctx.fillRect(obs.x + 3, obs.y + 3, obs.w - 6, obs.h - 6);
+
+  // Top glow line
+  ctx.fillStyle = '#ff66a0';
+  ctx.fillRect(obs.x, obs.y, obs.w, 2);
+
+  // Warning indicator for high obstacles
+  if (obs.type === 'high') {
+    ctx.strokeStyle = 'rgba(255,0,110,0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(obs.x + obs.w/2, obs.y + obs.h);
+    ctx.lineTo(obs.x + obs.w/2, canvas.height * 0.72);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.restore();
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.save();
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+}
+
+// ---- COLLISION ----
+function checkCollision(p, obs) {
+  const ph = p.ducking ? p.h * 0.5 : p.h;
+  const py = p.ducking ? p.y - ph * 0.5 : p.y - ph;
+  // Shrink hitbox slightly for fairness
+  const margin = 5;
+  return (
+    p.x - p.w/2 + margin < obs.x + obs.w - margin &&
+    p.x + p.w/2 - margin > obs.x + margin &&
+    py + margin < obs.y + obs.h - margin &&
+    p.y > obs.y + margin
+  );
+}
+
+// ---- GAME LOOP ----
+function gameLoop() {
+  if (!gameRunning) return;
+  frameCount++;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBg();
+
+  const groundY = canvas.height * 0.72;
+  const grav = 0.6;
+  const jumpVel = -13;
+  const action = gestureActions[currentGesture] || 'idle';
+
+  // Move bg buildings
+  const bldgs = bgLayers.find(l => l.type === 'buildings');
+  if (bldgs) {
+    bldgs.items.forEach(b => {
+      b.x -= b.speed;
+      if (b.x + b.w < 0) { b.x = canvas.width + Math.random() * 100; b.h = 40 + Math.random() * 120; }
+    });
+  }
+
+  // Player physics
+  if (action === 'jump' && player.grounded) {
+    player.vy = jumpVel;
+    player.grounded = false;
+    player.jumpCount = 1;
+    spawnParticles(player.x, player.y, '#00fff7', 6);
+  } else if (action === 'double_jump' && !player.grounded && player.jumpCount < player.maxJumps) {
+    player.vy = jumpVel * 0.85;
+    player.jumpCount++;
+    spawnParticles(player.x, player.y - player.h/2, '#ffee00', 10);
+  }
+
+  player.ducking = (action === 'duck');
+
+  player.vy += grav;
+  player.y += player.vy;
+
+  if (player.y >= groundY) {
+    player.y = groundY;
+    player.vy = 0;
+    player.grounded = true;
+    player.jumpCount = 0;
+  }
+
+  // Trail
+  player.trail.push({ x: player.x, y: player.y, h: player.h });
+  if (player.trail.length > 8) player.trail.shift();
+
+  if (player.invincible > 0) player.invincible--;
+
+  // Spawn obstacles
+  spawnTimer++;
+  speed = 3 + Math.floor(score / 200) * 0.5;
+  spawnInterval = Math.max(45, 90 - Math.floor(score / 300) * 5);
+
+  if (spawnTimer >= spawnInterval) {
+    spawnObstacle();
+    spawnTimer = 0;
+  }
+
+  // Move & draw obstacles
+  obstacles = obstacles.filter(obs => obs.x + obs.w > -10);
+  obstacles.forEach(obs => {
+    obs.x -= speed;
+    obs.speed = speed;
+    drawObstacle(obs);
+
+    if (!obs.hit && player.invincible === 0 && checkCollision(player, obs)) {
+      obs.hit = true;
+      lives--;
+      player.invincible = 80;
+      spawnParticles(player.x, player.y - player.h/2, '#ff006e', 16);
+      updateLives();
+      if (lives <= 0) { endGame(); return; }
+    }
+  });
+
+  // Draw player
+  drawPlayer(player);
+  drawParticles();
+
+  // Update particles
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy; p.vy += 0.1;
+    p.life -= p.decay; p.r *= 0.98;
+  });
+  particles = particles.filter(p => p.life > 0);
+
+  // Score
+  score++;
+  document.getElementById('score-value').textContent = score;
+  if (score > hiScore) { hiScore = score; document.getElementById('hi-val').textContent = hiScore; }
+
+  // Speed bar
+  const speedPct = Math.min(100, (speed - 3) / 5 * 100 + 10);
+  document.getElementById('speed-fill').style.width = speedPct + '%';
+
+  animId = requestAnimationFrame(gameLoop);
+}
+
+// ---- LIVES ----
+function updateLives() {
+  ['h1','h2','h3'].forEach((id, i) => {
+    document.getElementById(id).classList.toggle('dead', i >= lives);
+  });
+}
+
+// ---- START / END ----
+function startGame() {
+  document.getElementById('start-screen').style.display = 'none';
+  document.getElementById('gameover-screen').style.display = 'none';
+  score = 0;
+  lives = 3;
+  speed = 3;
+  frameCount = 0;
+  obstacles = [];
+  particles = [];
+  spawnTimer = 0;
+  spawnInterval = 90;
+  player = createPlayer();
+  updateLives();
+  gameRunning = true;
+  gameLoop();
+}
+
+function endGame() {
+  gameRunning = false;
+  if (animId) cancelAnimationFrame(animId);
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('final-hi').textContent = hiScore;
+  document.getElementById('gameover-screen').style.display = 'flex';
+}
+
+// ---- LOAD MODEL ----
+async function loadModel() {
+  const fill = document.getElementById('loader-fill');
+  const text = document.getElementById('loader-text');
+
+  text.textContent = 'LOADING AI MODEL...';
+  fill.style.width = '20%';
+
+  try {
+    const modelURL = MODEL_URL + 'model.json';
+    const metaURL = MODEL_URL + 'metadata.json';
+    model = await tmImage.load(modelURL, metaURL);
+    maxPredictions = model.getTotalClasses();
+    classes = [];
+    for (let i = 0; i < maxPredictions; i++) {
+      classes.push(model.getClassLabels ? model.getClassLabels()[i] : `Class ${i}`);
+    }
+  } catch(e) {
+    // Fallback label grab
+    classes = [];
+    for (let i = 0; i < (maxPredictions || 3); i++) classes.push(`Gesture ${i+1}`);
+  }
+
+  fill.style.width = '50%';
+  text.textContent = 'STARTING CAMERA...';
+
+  webcam = new tmImage.Webcam(224, 224, true);
+  await webcam.setup();
+  await webcam.play();
+  document.getElementById('webcam-container').appendChild(webcam.canvas);
+
+  fill.style.width = '80%';
+  text.textContent = 'MAPPING GESTURES...';
+
+  mapGestureActions(classes);
+  buildPredictionBars();
+  buildControlsUI();
+
+  fill.style.width = '100%';
+  text.textContent = 'READY!';
+
+  await new Promise(r => setTimeout(r, 600));
+
+  document.getElementById('loading-screen').style.display = 'none';
+  document.getElementById('game-wrapper').style.display = 'block';
+
+  // Start prediction loop
+  predictionLoop();
+}
+
+// ---- BUILD PREDICTION BARS ----
+function buildPredictionBars() {
+  const container = document.getElementById('predictions');
+  container.innerHTML = '';
+  classes.forEach(name => {
+    const row = document.createElement('div');
+    row.className = 'pred-row';
+    row.id = 'pred-' + name.replace(/\s+/g,'_');
+    row.innerHTML = `<div class="pred-label">${name}</div><div class="pred-bar-bg"><div class="pred-bar" style="width:0%"></div></div>`;
+    container.appendChild(row);
+  });
+}
+
+// ---- PREDICTION LOOP ----
+async function predictionLoop() {
+  webcam.update();
+  const preds = await model.predict(webcam.canvas);
+
+  let best = preds[0], bestIdx = 0;
+  preds.forEach((p, i) => { if (p.probability > best.probability) { best = p; bestIdx = i; } });
+
+  currentGesture = best.className;
+  gestureConfidence = best.probability;
+
+  document.getElementById('gesture-text').textContent =
+    `${currentGesture.toUpperCase()} (${(gestureConfidence * 100).toFixed(0)}%)`;
+
+  // Update bars
+  preds.forEach(p => {
+    const row = document.getElementById('pred-' + p.className.replace(/\s+/g,'_'));
+    if (!row) return;
+    const bar = row.querySelector('.pred-bar');
+    bar.style.width = (p.probability * 100).toFixed(1) + '%';
+    row.classList.toggle('active', p.className === currentGesture);
+  });
+
+  requestAnimationFrame(predictionLoop);
+}
+
+// ---- INIT ----
+document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('restart-btn').addEventListener('click', startGame);
+
+loadModel();
+</script>
+</body>
+</html>
